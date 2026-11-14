@@ -396,15 +396,36 @@ private struct NoteDraft: Identifiable {
 private struct ShirabeJishoButton: View {
     let query: String
 
+    @State private var outcome: ShirabeJisho.Outcome?
+    @Environment(\.openURL) private var openURL
+
+    private var word: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
-        Button {
-            ShirabeJisho.open(query: query)
-        } label: {
-            Label("Open in Shirabe Jisho", systemImage: "arrow.up.forward.square")
+        VStack(spacing: 8) {
+            Button {
+                outcome = ShirabeJisho.handOff(query: query)
+            } label: {
+                Label("Open in Shirabe Jisho", systemImage: "arrow.up.forward.square")
+            }
+            // A blank query has no search to hand off; an empty field is the
+            // one state where the button would do nothing.
+            .disabled(word.isEmpty)
+
+            // Only shown when no handler is registered — LiveContainer-hosted
+            // apps never register their schemes, and a silent no-op would look
+            // like a bug. The store link is explicit for the same reason.
+            if outcome == .copied {
+                Text("“\(word)” is on your clipboard — paste it into the Shirabe Jisho search field.")
+                    .font(.footnote)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(.secondary)
+                Button("Get Shirabe Jisho") { openURL(ShirabeJisho.appStoreURL) }
+                    .font(.footnote)
+            }
         }
-        // A blank query has no search to hand off; an empty field is the one
-        // state where the button would do nothing.
-        .disabled(ShirabeJisho.searchURL(for: query) == nil)
     }
 }
 

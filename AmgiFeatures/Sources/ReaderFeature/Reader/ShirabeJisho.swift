@@ -45,15 +45,40 @@ enum ShirabeJisho {
         return components.url
     }
 
-    /// Opens the word in Shirabe Jisho, or its App Store page when the app is
-    /// not installed — a dead end that at least leads somewhere.
+    enum Outcome: Equatable {
+        /// A handler was registered and the app was launched on the word.
+        case opened
+        /// No registered handler; the word is on the pasteboard instead.
+        case copied
+        /// Nothing to look up — the query was blank.
+        case emptyQuery
+    }
+
+    /// Opens the word in Shirabe Jisho, falling back to the pasteboard when no
+    /// app is registered for the scheme.
+    ///
+    /// The fallback exists because `canOpenURL` answers `false` for reasons
+    /// that have nothing to do with Shirabe being installed: a guest app under
+    /// LiveContainer never registers its schemes with SpringBoard at all
+    /// ("custom URL scheme queries often fail" — LiveContainer's own docs).
+    /// The App Store page is deliberately *not* an automatic fallback; being
+    /// thrown into the store for tapping a lookup button is worse than the
+    /// word quietly landing on the pasteboard, so the caller offers that link
+    /// explicitly instead.
     @MainActor
-    static func open(query: String) {
-        guard let url = searchURL(for: query) else { return }
+    static func handOff(query: String) -> Outcome {
+        guard let url = searchURL(for: query) else { return .emptyQuery }
+
+        // Apple documents `open` as unconstrained by `LSApplicationQueriesSchemes`,
+        // so a `canOpenURL` false still gets one attempt: it costs nothing and
+        // covers a handler the query list cannot see.
         if UIApplication.shared.canOpenURL(url) {
             UIApplication.shared.open(url)
-        } else {
-            UIApplication.shared.open(appStoreURL)
+            return .opened
         }
+
+        UIPasteboard.general.string = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        UIApplication.shared.open(url)
+        return .copied
     }
 }
