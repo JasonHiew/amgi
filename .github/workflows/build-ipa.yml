@@ -2,6 +2,11 @@ name: Build Unsigned IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      smoke:
+        description: 'Also build for the simulator (Debug) as a compatibility check'
+        type: boolean
+        default: false
   push:
     tags:
       - 'v*'
@@ -25,6 +30,12 @@ jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 60
+    env:
+      # An unsigned device IPA never links the simulator or watch-simulator
+      # Rust slices, and the watch slice is the expensive one (tier-3 target,
+      # std built from source). Local development keeps the default of all
+      # three; see scripts/build-xcframework.sh.
+      AMGI_RUST_SLICES: device
 
     steps:
       - name: Select Xcode 26.3
@@ -87,7 +98,7 @@ jobs:
             ~/.cargo/git
             anki-bridge-rs/target
             anki-upstream/out
-          key: ${{ runner.os }}-rust-1.95-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-rust-1.95-${{ env.AMGI_RUST_SLICES }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-rust-1.95-
 
@@ -135,7 +146,7 @@ jobs:
       # only earns its 6.6 minutes on branches and manual dispatches. Tag builds
       # skip it and rely on the archive as the compile gate.
       - name: Build Debug Simulator (Compatibility Smoke Check)
-        if: github.ref_type != 'tag'
+        if: github.ref_type != 'tag' && inputs.smoke
         run: |
           set -o pipefail
           DERIVED_DATA_PATH="$RUNNER_TEMP/DerivedData"
@@ -174,6 +185,8 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -destination 'generic/platform=iOS' \
             ONLY_ACTIVE_ARCH=NO \
+            DEBUG_INFORMATION_FORMAT=dwarf \
+            VALIDATE_PRODUCT=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \

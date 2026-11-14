@@ -51,18 +51,33 @@ NIGHTLY="${NIGHTLY_TOOLCHAIN:-nightly}"
 
 echo "==> Using protoc: $PROTOC"
 echo "==> Deployment target: iOS $IPHONEOS_DEPLOYMENT_TARGET / watchOS $WATCHOS_DEPLOYMENT_TARGET"
+# Slice set. Default builds all three. CI release builds pass
+# AMGI_RUST_SLICES=device: an unsigned device IPA never links the simulator or
+# watch-simulator slices, and the watch slice is the expensive one (tier-3
+# target, std built from source on nightly). The IPA is therefore device-only;
+# local development keeps the default.
+SLICES="${AMGI_RUST_SLICES:-all}"
+want_slice() { [ "$SLICES" = "all" ] || [ "$SLICES" = "$1" ]; }
+
+if want_slice device; then
 echo "==> Building for iOS device (aarch64-apple-ios)..."
 cargo build --locked \
     --manifest-path "$BRIDGE_DIR/Cargo.toml" \
     --target aarch64-apple-ios \
     --release
 
+fi
+
+if want_slice sim; then
 echo "==> Building for iOS simulator (aarch64-apple-ios-sim)..."
 cargo build --locked \
     --manifest-path "$BRIDGE_DIR/Cargo.toml" \
     --target aarch64-apple-ios-sim \
     --release
 
+fi
+
+if want_slice watchos-sim; then
 echo "==> Building for watchOS simulator (aarch64-apple-watchos-sim, build-std)..."
 # ponytail: sim slice only. The watchOS *device* target is arm64_32-apple-watchos
 # (ILP32); add it here the same way once a physical-watch build is actually needed.
@@ -71,6 +86,7 @@ cargo "+$NIGHTLY" build --locked \
     --manifest-path "$BRIDGE_DIR/Cargo.toml" \
     --target aarch64-apple-watchos-sim \
     --release
+fi
 
 # Wrap one cdylib into AnkiRustLib.framework. $1 = rust triple, $2 = slice name,
 # $3 = CFBundleSupportedPlatforms entry, $4 = MinimumOSVersion.
@@ -116,18 +132,28 @@ PLIST
     echo "==> $slice: $(du -h "$root/AnkiRustLib" | cut -f1)"
 }
 
+FRAMEWORK_ARGS=()
 echo "==> Staging frameworks..."
 rm -rf "$STAGE_DIR"
-make_framework aarch64-apple-ios            ios-device  iPhoneOS        "$IPHONEOS_DEPLOYMENT_TARGET"
-make_framework aarch64-apple-ios-sim        ios-sim     iPhoneSimulator "$IPHONEOS_DEPLOYMENT_TARGET"
-make_framework aarch64-apple-watchos-sim    watchos-sim WatchSimulator  "$WATCHOS_DEPLOYMENT_TARGET"
+if want_slice device; then
+    make_framework aarch64-apple-ios            ios-device  iPhoneOS        "$IPHONEOS_DEPLOYMENT_TARGET"
+    FRAMEWORK_ARGS+=(-framework "$STAGE_DIR/ios-device/AnkiRustLib.framework")
+fi
+if want_slice sim; then
+    make_framework aarch64-apple-ios-sim        ios-sim     iPhoneSimulator "$IPHONEOS_DEPLOYMENT_TARGET"
+    FRAMEWORK_ARGS+=(-framework "$STAGE_DIR/ios-sim/AnkiRustLib.framework")
+fi
+if want_slice watchos-sim; then
+    make_framework aarch64-apple-watchos-sim    watchos-sim WatchSimulator  "$WATCHOS_DEPLOYMENT_TARGET"
+    FRAMEWORK_ARGS+=(-framework "$STAGE_DIR/watchos-sim/AnkiRustLib.framework")
+fi
 
-echo "==> Packaging XCFramework..."
+echo "==> Packaging XCFramework ($SLICES slices)..."
 rm -rf "$OUTPUT_DIR"
+# Portable empty-array expansion: macOS ships bash 3.2, where "${arr[@]}"
+# under `set -u` is an unbound-variable error.
 xcodebuild -create-xcframework \
-    -framework "$STAGE_DIR/ios-device/AnkiRustLib.framework" \
-    -framework "$STAGE_DIR/ios-sim/AnkiRustLib.framework" \
-    -framework "$STAGE_DIR/watchos-sim/AnkiRustLib.framework" \
+    ${FRAMEWORK_ARGS[@]+"${FRAMEWORK_ARGS[@]}"} \
     -output "$OUTPUT_DIR"
 
 echo "==> Restoring cargo binaries over the packaged ones (LINKEDIT alignment)..."
@@ -150,9 +176,9 @@ restore_binary() {
     echo "==> $slice: stroff=$stroff (8-byte aligned)"
 }
 
-restore_binary aarch64-apple-ios         ios-arm64
-restore_binary aarch64-apple-ios-sim     ios-arm64-simulator
-restore_binary aarch64-apple-watchos-sim watchos-arm64-simulator
+if want_slice device; then restore_binary aarch64-apple-ios ios-arm64; fi
+if want_slice sim; then restore_binary aarch64-apple-ios-sim ios-arm64-simulator; fi
+if want_slice watchos-sim; then restore_binary aarch64-apple-watchos-sim watchos-arm64-simulator; fi
 
 echo "==> Done! XCFramework at: $OUTPUT_DIR"
 echo "==> Contents:"
