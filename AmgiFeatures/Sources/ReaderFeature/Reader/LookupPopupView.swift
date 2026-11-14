@@ -254,13 +254,25 @@ package struct LookupPopupView: View {
                 }
             }
         } else if model.result?.isPlaceholder == true {
+            // The engine answers `isPlaceholder` when the profile has no
+            // enabled term dictionary, so this is a library state, not a
+            // missing-match state — the description says which, and the
+            // hand-off covers the user who never installs one.
             ContentUnavailableView {
-                Label("Engine not ready", systemImage: "hourglass")
+                Label("No dictionary installed", systemImage: "character.book.closed")
             } description: {
-                Text("Dictionary lookup engine is still a placeholder — full hoshidicts integration is pending.")
+                Text("No Yomitan dictionary is enabled for this profile. Add one in Settings → Reader → Dictionaries, or look the word up in Shirabe Jisho.")
+            } actions: {
+                ShirabeJishoButton(query: query)
             }
         } else {
-            ContentUnavailableView.search(text: query)
+            ContentUnavailableView {
+                Label("No results", systemImage: "magnifyingglass")
+            } description: {
+                Text("Nothing in the installed dictionaries matched “\(query)”.")
+            } actions: {
+                ShirabeJishoButton(query: query)
+            }
         }
     }
 
@@ -376,6 +388,24 @@ private extension LookupPopupView {
 private struct NoteDraft: Identifiable {
     let id = UUID()
     let draft: AddNoteDraft
+}
+
+/// Hand-off button shared by the popup's dead-end states — no dictionary
+/// installed, and no match in the ones installed. Both leave the user holding
+/// a word and nowhere to put it; Shirabe Jisho is one tap away instead.
+private struct ShirabeJishoButton: View {
+    let query: String
+
+    var body: some View {
+        Button {
+            ShirabeJisho.open(query: query)
+        } label: {
+            Label("Open in Shirabe Jisho", systemImage: "arrow.up.forward.square")
+        }
+        // A blank query has no search to hand off; an empty field is the one
+        // state where the button would do nothing.
+        .disabled(ShirabeJisho.searchURL(for: query) == nil)
+    }
 }
 
 /// One entry in the popup's chained-lookup stack. UUID + query so two

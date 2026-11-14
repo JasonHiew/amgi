@@ -29,6 +29,12 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<!-- Shirabe Jisho deep links; without this entry canOpenURL answers
+		     false for the scheme even with the app installed. -->
+		<string>shirabelookup</string>
+	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Record your pronunciation or other audio directly onto flashcards.</string>
 	<key>UIAppFonts</key>
