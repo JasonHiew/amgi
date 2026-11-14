@@ -25,13 +25,6 @@ jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 60
-    env:
-      # One DerivedData path for every build step in the job: the simulator
-      # check and the archive otherwise use different directories and warm
-      # nothing for each other, and the archive does not pass
-      # -derivedDataPath at all unless it shares this. Job-level, not
-      # workflow-level: `runner` is not an allowed context in a top-level env.
-      DERIVED_DATA: ${{ runner.temp }}/DerivedData
 
     steps:
       - name: Select Xcode 26.3
@@ -66,9 +59,9 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
-            ${{ env.DERIVED_DATA }}/*/Build/Intermediates.noindex
-            ${{ env.DERIVED_DATA }}/*/Build/CompilationCache.noindex
-            ${{ env.DERIVED_DATA }}/*/Build/ModuleCache.noindex
+            ${{ runner.temp }}/DerivedData/*/Build/Intermediates.noindex
+            ${{ runner.temp }}/DerivedData/*/Build/CompilationCache.noindex
+            ${{ runner.temp }}/DerivedData/*/Build/ModuleCache.noindex
           # Weekly rotation, not per-commit: a per-sha key writes a multi-GB
           # entry on every push and would evict the Rust XCFramework cache,
           # which is the more expensive one to rebuild. Restore still falls back
@@ -145,7 +138,7 @@ jobs:
         if: github.ref_type != 'tag'
         run: |
           set -o pipefail
-          DERIVED_DATA_PATH="$DERIVED_DATA"
+          DERIVED_DATA_PATH="$RUNNER_TEMP/DerivedData"
           if xcodebuild -list -workspace AmgiApp/AmgiApp.xcworkspace | grep -q "Tests"; then
             xcodebuild build-for-testing \
               -workspace AmgiApp/AmgiApp.xcworkspace \
@@ -178,7 +171,7 @@ jobs:
             -scheme AmgiApp \
             -configuration Release \
             -archivePath "$RUNNER_TEMP/AmgiApp.xcarchive" \
-            -derivedDataPath "$DERIVED_DATA" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
             -destination 'generic/platform=iOS' \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="" \
@@ -232,7 +225,7 @@ jobs:
       # shared with the Rust XCFramework entry).
       - name: Report DerivedData cache size
         if: always()
-        run: du -sh "$DERIVED_DATA"/*/Build/Intermediates.noindex "$DERIVED_DATA"/*/Build/CompilationCache.noindex "$DERIVED_DATA"/*/Build/ModuleCache.noindex 2>/dev/null || echo "no DerivedData to measure"
+        run: du -sh "$RUNNER_TEMP/DerivedData"/*/Build/Intermediates.noindex "$RUNNER_TEMP/DerivedData"/*/Build/CompilationCache.noindex "$RUNNER_TEMP/DerivedData"/*/Build/ModuleCache.noindex 2>/dev/null || echo "no DerivedData to measure"
 
       # Saved last so the entry holds what a *successful* build produced. A
       # skipped simulator step (tag builds) simply caches fewer intermediates.
@@ -241,9 +234,9 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
-            ${{ env.DERIVED_DATA }}/*/Build/Intermediates.noindex
-            ${{ env.DERIVED_DATA }}/*/Build/CompilationCache.noindex
-            ${{ env.DERIVED_DATA }}/*/Build/ModuleCache.noindex
+            ${{ runner.temp }}/DerivedData/*/Build/Intermediates.noindex
+            ${{ runner.temp }}/DerivedData/*/Build/CompilationCache.noindex
+            ${{ runner.temp }}/DerivedData/*/Build/ModuleCache.noindex
           key: ${{ steps.derived-data-cache.outputs.cache-primary-key }}
 
       - name: Generate Build Summary
