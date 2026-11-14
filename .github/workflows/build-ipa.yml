@@ -13,6 +13,11 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   NIGHTLY_TOOLCHAIN: nightly-2026-08-17
+  # One DerivedData path for every build step in the job: the simulator check
+  # and the archive otherwise use different directories and warm nothing for
+  # each other, and the archive does not pass -derivedDataPath at all unless it
+  # shares this.
+  DERIVED_DATA: ${{ runner.temp }}/DerivedData
 
 permissions:
   contents: read
@@ -42,6 +47,33 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
+
+      - name: Derive cache rotation key
+        id: cache-rotation
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      # Warm start for the 20 minutes of compilation below. Only the halves of
+      # DerivedData that make Xcode skip work are cached: Intermediates, the
+      # compilation CAS the project already enables, and the Clang module
+      # cache. Build/Products and SourcePackages are deliberately left out —
+      # products get relinked anyway and SourcePackages comes back through the
+      # Tuist/SPM cache step, so caching them would only eat the 10 GB budget
+      # the Rust XCFramework cache needs.
+      - name: Restore DerivedData cache
+        id: derived-data-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ${{ env.DERIVED_DATA }}/*/Build/Intermediates.noindex
+            ${{ env.DERIVED_DATA }}/*/Build/CompilationCache.noindex
+            ${{ env.DERIVED_DATA }}/*/Build/ModuleCache.noindex
+          # Weekly rotation, not per-commit: a per-sha key writes a multi-GB
+          # entry on every push and would evict the Rust XCFramework cache,
+          # which is the more expensive one to rebuild. Restore still falls back
+          # to the previous week's snapshot, so a fresh week starts warm.
+          key: ${{ runner.os }}-dd-${{ steps.cache-rotation.outputs.week }}
+          restore-keys: |
+            ${{ runner.os }}-dd-
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
@@ -81,6 +113,22 @@ jobs:
           chmod +x ./scripts/generate-protos.sh
           ./scripts/generate-protos.sh
 
+      # `tuist install` re-resolves every Swift package from network on a cold
+      # runner (1.8 min in the 2026-11-14 timing). Keyed on the resolved files
+      # so a manifest or pin change invalidates it instead of feeding a
+      # mismatched .build to `-disableAutomaticPackageResolution`.
+      - name: Restore Tuist and SPM resolution cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            Tuist/.build
+            Tuist/.tuist-cache
+            .build
+            AmgiReader/.build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Tuist/Package.swift', 'Tuist/Package.resolved', 'Package.resolved', 'AmgiReader/Package.resolved', 'AmgiReader/Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
       - name: Generate Xcode project
         run: |
           tuist install
@@ -88,10 +136,14 @@ jobs:
           echo "=== Files in AmgiApp/ ==="
           ls -la AmgiApp/
 
+      # The archive below compiles the same sources for device, so this check
+      # only earns its 6.6 minutes on branches and manual dispatches. Tag builds
+      # skip it and rely on the archive as the compile gate.
       - name: Build Debug Simulator (Compatibility Smoke Check)
+        if: github.ref_type != 'tag'
         run: |
           set -o pipefail
-          DERIVED_DATA_PATH="$RUNNER_TEMP/DerivedData"
+          DERIVED_DATA_PATH="$DERIVED_DATA"
           if xcodebuild -list -workspace AmgiApp/AmgiApp.xcworkspace | grep -q "Tests"; then
             xcodebuild build-for-testing \
               -workspace AmgiApp/AmgiApp.xcworkspace \
@@ -124,6 +176,7 @@ jobs:
             -scheme AmgiApp \
             -configuration Release \
             -archivePath "$RUNNER_TEMP/AmgiApp.xcarchive" \
+            -derivedDataPath "$DERIVED_DATA" \
             -destination 'generic/platform=iOS' \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="" \
@@ -171,6 +224,25 @@ jobs:
           path: /tmp/AmgiApp-unsigned.ipa
           retention-days: 7
           if-no-files-found: error
+
+      # Measured, not assumed: the whole cache policy above stands or falls on
+      # how big these three directories actually are (10 GB per-repo budget,
+      # shared with the Rust XCFramework entry).
+      - name: Report DerivedData cache size
+        if: always()
+        run: du -sh "$DERIVED_DATA"/*/Build/Intermediates.noindex "$DERIVED_DATA"/*/Build/CompilationCache.noindex "$DERIVED_DATA"/*/Build/ModuleCache.noindex 2>/dev/null || echo "no DerivedData to measure"
+
+      # Saved last so the entry holds what a *successful* build produced. A
+      # skipped simulator step (tag builds) simply caches fewer intermediates.
+      - name: Save DerivedData cache
+        if: always() && steps.derived-data-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            ${{ env.DERIVED_DATA }}/*/Build/Intermediates.noindex
+            ${{ env.DERIVED_DATA }}/*/Build/CompilationCache.noindex
+            ${{ env.DERIVED_DATA }}/*/Build/ModuleCache.noindex
+          key: ${{ steps.derived-data-cache.outputs.cache-primary-key }}
 
       - name: Generate Build Summary
         if: always()
