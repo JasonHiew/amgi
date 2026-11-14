@@ -110,6 +110,11 @@ struct SettingsPickerRow<Value: Hashable, Options: View>: View {
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .tint(palette.textSecondary)
+                // A menu Picker reports a compressible width, so inside the
+                // row's HStack the selected title wraps ("Match / system")
+                // and knocks the title off-centre. Pin it to its ideal width
+                // and let the row's Spacer absorb the slack instead.
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 }
