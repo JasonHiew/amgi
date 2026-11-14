@@ -35,7 +35,7 @@ jobs:
       # Rust slices, and the watch slice is the expensive one (tier-3 target,
       # std built from source). Local development keeps the default of all
       # three; see scripts/build-xcframework.sh.
-      AMGI_RUST_SLICES: device
+      AMGI_RUST_SLICES: ${{ inputs.smoke && 'all' || 'device' }}
 
     steps:
       - name: Select Xcode 26.3
@@ -173,6 +173,35 @@ jobs:
               -skipMacroValidation \
               2>&1 | tee simulator-build.log
           fi
+
+      # Same leg, one step further: the UI target is small (three cases) and
+      # needs no account or fixture deck, so running it is cheap once the
+      # build-for-testing above has done the compiling.
+      - name: Run UI smoke tests
+        if: github.ref_type != 'tag' && inputs.smoke
+        run: |
+          set -o pipefail
+          xcodebuild test-without-building \
+            -workspace AmgiApp/AmgiApp.xcworkspace \
+            -scheme AmgiApp \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro Max' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -only-testing:AmgiAppUITests \
+            -disableAutomaticPackageResolution \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            2>&1 | tee ui-tests.log
+
+      - name: Upload UI test log and screenshots
+        if: always() && github.ref_type != 'tag' && inputs.smoke
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ui-test-results
+          path: |
+            ui-tests.log
+            ${{ runner.temp }}/DerivedData/Logs/Test
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Build unsigned xcarchive
         run: |
