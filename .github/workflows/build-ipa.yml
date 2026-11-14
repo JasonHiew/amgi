@@ -13,11 +13,6 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   NIGHTLY_TOOLCHAIN: nightly-2026-08-17
-  # One DerivedData path for every build step in the job: the simulator check
-  # and the archive otherwise use different directories and warm nothing for
-  # each other, and the archive does not pass -derivedDataPath at all unless it
-  # shares this.
-  DERIVED_DATA: ${{ runner.temp }}/DerivedData
 
 permissions:
   contents: read
@@ -30,6 +25,13 @@ jobs:
   build:
     runs-on: macos-26
     timeout-minutes: 60
+    env:
+      # One DerivedData path for every build step in the job: the simulator
+      # check and the archive otherwise use different directories and warm
+      # nothing for each other, and the archive does not pass
+      # -derivedDataPath at all unless it shares this. Job-level, not
+      # workflow-level: `runner` is not an allowed context in a top-level env.
+      DERIVED_DATA: ${{ runner.temp }}/DerivedData
 
     steps:
       - name: Select Xcode 26.3
