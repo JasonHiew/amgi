@@ -14,8 +14,6 @@ import AVFoundation
 import UIKit
 import SafariServices
 import AmgiCardWeb
-import AnkiClients
-import Dependencies
 
 private final class TTSUtterance: AVSpeechUtterance {
     var token = 0
@@ -61,9 +59,6 @@ final class CardWebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMess
     private var activeUtterance: TTSUtterance?
     private var ttsRequestID: String?
     private var lastTTSToken = 0
-    /// Plays card media the page handed back to us — see WebCardAudioBridge for why.
-    private let audioBridge = WebCardAudioBridge()
-    @Dependency(\.mediaClient) private var mediaClient
 
     // MARK: Init
 
@@ -84,17 +79,6 @@ final class CardWebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMess
     // MARK: - WKScriptMessageHandler
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        if message.name == "amgiPlayAudio" {
-            playPageAudio(message)
-            return
-        }
-
-        if message.name == "amgiStopAudio" {
-            audioBridge.stop()
-            onAudioStateChange?(false)
-            return
-        }
-
         if message.name == "amgiShowAnswer" {
             onShowAnswerRequested?()
             return
@@ -176,38 +160,6 @@ final class CardWebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMess
         guard let token = (utterance as? TTSUtterance)?.token else { return }
         Task { @MainActor [weak self] in
             self?.finishTTS(token)
-        }
-    }
-
-    // MARK: - Page audio
-
-    /// Resolves an `amgi-asset://media/…` URL the page handed back and plays it
-    /// natively, so WebKit never takes the session. Reports the state change the
-    /// page would have reported itself, and replays `ended` into the page when
-    /// the native item finishes.
-    private func playPageAudio(_ message: WKScriptMessage) {
-        guard
-            let body = message.body as? [String: Any],
-            let src = body["src"] as? String,
-            let url = URL(string: src),
-            let fileURL = CardAssetPath.resolve(
-                url: url,
-                mediaRoot: mediaClient.folderURL(),
-                bundleRoot: Bundle.main.resourceURL
-            )
-        else {
-            onAudioStateChange?(false)
-            return
-        }
-
-        let token = (body["token"] as? NSNumber)?.intValue ?? 0
-        onAudioStateChange?(true)
-        audioBridge.play(url: fileURL, token: token) { [weak self] finishedToken in
-            guard let self else { return }
-            self.onAudioStateChange?(false)
-            self.currentWebView?.evaluateJavaScript(
-                "window.__amgiNativeAudioEnded && window.__amgiNativeAudioEnded(\(finishedToken));"
-            )
         }
     }
 
