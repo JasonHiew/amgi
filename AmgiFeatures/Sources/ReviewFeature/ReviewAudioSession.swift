@@ -114,9 +114,9 @@ enum ReviewAudioSession {
     ) -> AVAudioSession.CategoryOptions {
         switch mode {
         case .interrupt: return []
-        // `.duckOthers` already implies mixing; adding `.mixWithOthers` alongside
-        // it is contradictory and iOS resolves it as "do not affect others",
-        // which is why Duck used to behave like Mix.
+        // `duckOthers` implicitly sets `mixWithOthers` (Apple's docs), so listing
+        // both was redundant; ducking lasts from activation to deactivation, which
+        // is why the restore path matters more than this bit.
         case .duck: return [.duckOthers]
         case .mix: return [.mixWithOthers]
         }
