@@ -4,6 +4,7 @@
 //
 
 import AVFoundation
+import AppCore
 import Foundation
 
 /// Plays card media that the page would otherwise hand to WebKit.
