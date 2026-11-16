@@ -31,9 +31,11 @@ public enum ReviewAudioPlaybackMode: String, CaseIterable, Identifiable, Sendabl
 
     public var label: String {
         switch self {
-        case .interrupt: return "Interrupt other audio"
-        case .duck: return "Duck other audio"
-        case .mix: return "Mix with other audio"
+        // Short enough to sit in a settings row beside the label without
+        // wrapping or truncating; the section header already says Audio.
+        case .interrupt: return "Interrupt"
+        case .duck: return "Duck"
+        case .mix: return "Mix"
         }
     }
 
