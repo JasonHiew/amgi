@@ -25,6 +25,10 @@ final class WebCardAudioBridge {
     private var pendingToken: Int = 0
     private var onEnd: ((Int) -> Void)?
     private var onFailure: ((Int) -> Void)?
+    /// Mode used for the item in flight, so the session can be handed back with the
+    /// same shape it was taken with.
+    private var appliedMode: ReviewAudioPlaybackMode = .mix
+    private var restoreTask: Task<Void, Never>?
 
     func play(
         url: URL,
@@ -32,9 +36,12 @@ final class WebCardAudioBridge {
         onEnd: @escaping (Int) -> Void,
         onFailure: @escaping (Int) -> Void
     ) {
-        stop()
+        teardownPlayer()
+        restoreTask?.cancel()
         // Re-assert for every item: a lookup popup or a TTS utterance may have
         // changed the category since the review session started.
+        let mode = ReviewAudioSession.currentMode()
+        appliedMode = mode
         ReviewAudioSession.applyCurrentPreferences()
         pendingToken = token
         self.onEnd = onEnd
@@ -61,7 +68,14 @@ final class WebCardAudioBridge {
         player.play()
     }
 
+    /// Page asked for silence (its stop button, or it cleared the queue).
     func stop() {
+        restoreTask?.cancel()
+        teardownPlayer()
+        ReviewAudioSession.restoreIfNeeded(mode: appliedMode)
+    }
+
+    private func teardownPlayer() {
         player?.pause()
         player = nil
         removeObservers()
@@ -84,15 +98,27 @@ final class WebCardAudioBridge {
         let token = pendingToken
         let endHandler = onEnd
         let failureHandler = onFailure
-        player?.pause()
-        player = nil
-        removeObservers()
-        onEnd = nil
-        onFailure = nil
+        teardownPlayer()
+        scheduleRestore()
         if failed {
             failureHandler?(token)
         } else {
             endHandler?(token)
+        }
+    }
+
+    /// Hand the session back shortly after the last item, not on every item: the
+    /// page advances word → sentence immediately, and deactivating between the two
+    /// would let the other app's audio pop back up mid-sequence. A new play cancels
+    /// the pending restore.
+    private func scheduleRestore() {
+        guard appliedMode != .mix else { return }
+        restoreTask?.cancel()
+        let mode = appliedMode
+        restoreTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            ReviewAudioSession.restoreIfNeeded(mode: mode)
         }
     }
 }

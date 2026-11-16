@@ -76,7 +76,12 @@ package struct ReviewView: View {
             onDismiss: onDismiss
         )
         .task {
-            ReviewAudioSession.apply(playInSilent: playAudioInSilentMode, modeRaw: audioPlaybackModeRaw)
+            // Prepare, don't activate: Duck and Interrupt take the session only when a
+            // sound starts, so opening review never quiets the user's music.
+            ReviewAudioSession.prepare(
+                playInSilent: playAudioInSilentMode,
+                mode: ReviewAudioPlaybackMode.resolved(audioPlaybackModeRaw)
+            )
             session.start()
         }
         .reviewSessionAlert("Couldn't save that review", \ReviewSession.answerError, in: session)
@@ -86,10 +91,16 @@ package struct ReviewView: View {
         // retry surface in `ReviewContent`, because a failure is not a finished deck.
         .reviewSessionAlert("Couldn't update the session", \ReviewSession.requeueError, in: session)
         .onChange(of: playAudioInSilentMode) { _, newValue in
-            ReviewAudioSession.apply(playInSilent: newValue, modeRaw: audioPlaybackModeRaw)
+            ReviewAudioSession.prepare(
+                playInSilent: newValue,
+                mode: ReviewAudioPlaybackMode.resolved(audioPlaybackModeRaw)
+            )
         }
-        .onChange(of: audioPlaybackModeRaw) { _, _ in
-            ReviewAudioSession.apply(playInSilent: playAudioInSilentMode, modeRaw: audioPlaybackModeRaw)
+        .onChange(of: audioPlaybackModeRaw) { _, newValue in
+            ReviewAudioSession.prepare(
+                playInSilent: playAudioInSilentMode,
+                mode: ReviewAudioPlaybackMode.resolved(newValue)
+            )
         }
         .onDisappear {
             ReviewAudioSession.release()

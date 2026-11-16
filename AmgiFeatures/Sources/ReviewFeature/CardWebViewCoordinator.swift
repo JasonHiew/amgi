@@ -248,6 +248,10 @@ final class CardWebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMess
         activeUtterance = nil
         let requestID = ttsRequestID
         ttsRequestID = nil
+        // Speech under Duck/Interrupt left the other app's audio reduced; hand the
+        // session back now that nothing is playing. The JS queue re-asserts the
+        // category when it starts the next item.
+        ReviewAudioSession.restoreIfNeeded(mode: ReviewAudioSession.currentMode())
         // A JS-driven request ends the state itself: it sends true for the next queue item or false after the last.
         guard requestID != nil else {
             onAudioStateChange?(false)
