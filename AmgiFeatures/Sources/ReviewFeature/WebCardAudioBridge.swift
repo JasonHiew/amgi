@@ -95,20 +95,8 @@ enum WebCardAudioScript {
         } catch (e) {}
         try {
           window.webkit.messageHandlers.amgiPlayAudio.postMessage({ src: src, token: token });
-        } catch (e) {
-          delete pending[token];
-          return nativePlay.apply(this, arguments);
-        }
+        } catch (e) {}
         return Promise.resolve();
-      };
-
-      // Native could not take the file (missing media, unavailable store). Play it
-      // in the page instead: ducking is a better failure than silence.
-      window.__amgiNativeAudioFallback = function (token) {
-        var element = pending[token];
-        if (!element) { return; }
-        delete pending[token];
-        try { nativePlay.call(element); } catch (e) {}
       };
 
       HTMLMediaElement.prototype.pause = function () {

@@ -196,14 +196,6 @@ final class CardWebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMess
                 bundleRoot: Bundle.main.resourceURL
             )
         else {
-            // Could not resolve the file (missing media, store unavailable): let the
-            // page play it. Losing the mix is better than losing the audio.
-            if let body = message.body as? [String: Any],
-               let token = (body["token"] as? NSNumber)?.intValue {
-                currentWebView?.evaluateJavaScript(
-                    "window.__amgiNativeAudioFallback && window.__amgiNativeAudioFallback(\(token));"
-                )
-            }
             onAudioStateChange?(false)
             return
         }
