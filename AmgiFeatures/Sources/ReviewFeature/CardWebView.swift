@@ -108,9 +108,17 @@ struct CardWebView {
         ))
         config.userContentController.add(coordinator, name: "amgiSpeakTts")
         config.userContentController.add(coordinator, name: "amgiStopTts")
+        config.userContentController.add(coordinator, name: "amgiPlayAudio")
+        config.userContentController.add(coordinator, name: "amgiStopAudio")
         config.userContentController.add(coordinator, name: "amgiCardTheme")
         config.userContentController.add(coordinator, name: "amgiLookupText")
         config.userContentController.add(coordinator, name: "amgiShowAnswer")
+
+        config.userContentController.addUserScript(WKUserScript(
+            source: WebCardAudioScript.source,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
 
         config.userContentController.addUserScript(WKUserScript(
             source: LookupExtractionScript.source,
@@ -137,6 +145,8 @@ struct CardWebView {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "amgiOpenLink", contentWorld: CardWebViewCoordinator.linkWorld)
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "amgiSpeakTts")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "amgiStopTts")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "amgiPlayAudio")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "amgiStopAudio")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "amgiCardTheme")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "amgiLookupText")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "amgiShowAnswer")
