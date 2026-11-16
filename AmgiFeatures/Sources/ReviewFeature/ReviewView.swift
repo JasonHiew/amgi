@@ -51,6 +51,9 @@ package struct ReviewView: View {
     @Shared(.appStorage(ReviewPreferences.Keys.playAudioInSilentMode))
     private var playAudioInSilentMode: Bool = false
 
+    @Shared(.appStorage(ReviewPreferences.Keys.audioPlaybackMode))
+    private var audioPlaybackModeRaw: String = ReviewAudioPlaybackMode.mix.rawValue
+
     @State private var session: ReviewSession
     @State private var destination: ReviewDestination?
 
@@ -73,7 +76,7 @@ package struct ReviewView: View {
             onDismiss: onDismiss
         )
         .task {
-            ReviewAudioSession.apply(playInSilent: playAudioInSilentMode)
+            ReviewAudioSession.apply(playInSilent: playAudioInSilentMode, modeRaw: audioPlaybackModeRaw)
             session.start()
         }
         .reviewSessionAlert("Couldn't save that review", \ReviewSession.answerError, in: session)
@@ -83,7 +86,10 @@ package struct ReviewView: View {
         // retry surface in `ReviewContent`, because a failure is not a finished deck.
         .reviewSessionAlert("Couldn't update the session", \ReviewSession.requeueError, in: session)
         .onChange(of: playAudioInSilentMode) { _, newValue in
-            ReviewAudioSession.apply(playInSilent: newValue)
+            ReviewAudioSession.apply(playInSilent: newValue, modeRaw: audioPlaybackModeRaw)
+        }
+        .onChange(of: audioPlaybackModeRaw) { _, _ in
+            ReviewAudioSession.apply(playInSilent: playAudioInSilentMode, modeRaw: audioPlaybackModeRaw)
         }
         .onDisappear {
             ReviewAudioSession.release()

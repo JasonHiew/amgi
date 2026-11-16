@@ -17,9 +17,35 @@ public enum ReaderThemeMode: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
 }
 
+/// How review audio coexists with whatever else is playing (music, podcasts,
+/// video). Mirrors the dictionary lookup player's three modes so the reader and
+/// review behave the same way; the raw values are persisted, so they stay stable.
+/// The default is `.mix`: review audio must never duck or stop background audio
+/// unless the user asks for it.
+public enum ReviewAudioPlaybackMode: String, CaseIterable, Identifiable, Sendable {
+    case interrupt
+    case duck
+    case mix
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .interrupt: return "Interrupt other audio"
+        case .duck: return "Duck other audio"
+        case .mix: return "Mix with other audio"
+        }
+    }
+
+    public static func resolved(_ raw: String) -> ReviewAudioPlaybackMode {
+        ReviewAudioPlaybackMode(rawValue: raw) ?? .mix
+    }
+}
+
 public enum ReviewPreferences {
     public enum Keys {
         public static let playAudioInSilentMode = "review_pref_play_audio_in_silent_mode"
+        public static let audioPlaybackMode = "review_pref_audio_playback_mode"
         public static let showCorrectnessSymbols = "review_pref_show_correctness_symbols"
         public static let showAnswerButtons = "review_pref_show_answer_buttons"
         public static let cardRenderEngine = "review_pref_card_render_engine"

@@ -31,6 +31,9 @@ struct ReviewSettingsView: View {
     @Shared(.appStorage(ReviewPreferences.Keys.playAudioInSilentMode))
     private var playAudioInSilentMode: Bool = false
 
+    @Shared(.appStorage(ReviewPreferences.Keys.audioPlaybackMode))
+    private var audioPlaybackModeRaw: String = ReviewAudioPlaybackMode.mix.rawValue
+
     var body: some View {
         SettingsPage {
             cardDisplaySection
@@ -103,6 +106,20 @@ struct ReviewSettingsView: View {
                     tone: .learning,
                     isOn: Binding($playAudioInSilentMode)
                 )
+                SettingsSeparator()
+                // Same three modes as the dictionary lookup player, so review
+                // audio can keep background music or video playing instead of
+                // ducking or interrupting it.
+                SettingsPickerRow(
+                    title: "Playback mode",
+                    systemImage: "waveform",
+                    tone: .learning,
+                    selection: Binding($audioPlaybackModeRaw)
+                ) {
+                    ForEach(ReviewAudioPlaybackMode.allCases) { mode in
+                        Text(mode.label).tag(mode.rawValue)
+                    }
+                }
             }
         }
     }
