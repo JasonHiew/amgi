@@ -21,27 +21,42 @@ final class WebCardAudioBridge {
     /// replayed once native playback finishes.
     private var player: AVPlayer?
     private var endObserver: (any NSObjectProtocol)?
+    private var failureObserver: (any NSObjectProtocol)?
     private var pendingToken: Int = 0
     private var onEnd: ((Int) -> Void)?
+    private var onFailure: ((Int) -> Void)?
 
-    func play(url: URL, token: Int, onEnd: @escaping (Int) -> Void) {
+    func play(
+        url: URL,
+        token: Int,
+        onEnd: @escaping (Int) -> Void,
+        onFailure: @escaping (Int) -> Void
+    ) {
         stop()
         // Re-assert for every item: a lookup popup or a TTS utterance may have
         // changed the category since the review session started.
         ReviewAudioSession.applyCurrentPreferences()
         pendingToken = token
         self.onEnd = onEnd
+        self.onFailure = onFailure
         let item = AVPlayerItem(url: url)
         let player = AVPlayer(playerItem: item)
         self.player = player
-        // Only `self` crosses domains here; the page callback is invoked on the
-        // main actor in `finish`, so it never has to be Sendable.
+        // Only `self` crosses domains here; the page callbacks are invoked on the
+        // main actor in `finish`, so they never have to be Sendable.
         endObserver = NotificationCenter.default.addObserver(
             forName: AVPlayerItem.didPlayToEndTimeNotification,
             object: item,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.finish() }
+            Task { @MainActor in self?.finish(failed: false) }
+        }
+        failureObserver = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.failedToPlayToEndTimeNotification,
+            object: item,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.finish(failed: true) }
         }
         player.play()
     }
@@ -49,24 +64,36 @@ final class WebCardAudioBridge {
     func stop() {
         player?.pause()
         player = nil
-        if let endObserver {
-            NotificationCenter.default.removeObserver(endObserver)
-            self.endObserver = nil
-        }
+        removeObservers()
         onEnd = nil
+        onFailure = nil
     }
 
-    private func finish() {
-        let token = pendingToken
-        let handler = onEnd
-        player?.pause()
-        player = nil
+    private func removeObservers() {
         if let endObserver {
             NotificationCenter.default.removeObserver(endObserver)
             self.endObserver = nil
         }
+        if let failureObserver {
+            NotificationCenter.default.removeObserver(failureObserver)
+            self.failureObserver = nil
+        }
+    }
+
+    private func finish(failed: Bool) {
+        let token = pendingToken
+        let endHandler = onEnd
+        let failureHandler = onFailure
+        player?.pause()
+        player = nil
+        removeObservers()
         onEnd = nil
-        handler?(token)
+        onFailure = nil
+        if failed {
+            failureHandler?(token)
+        } else {
+            endHandler?(token)
+        }
     }
 }
 
@@ -85,7 +112,11 @@ enum WebCardAudioScript {
       var nativePause = HTMLMediaElement.prototype.pause;
 
       HTMLMediaElement.prototype.play = function () {
-        var src = this.currentSrc || this.src || '';
+        // `src`, never `currentSrc`: the card's replay queue reuses one hidden
+        // element and reassigns `src` per item, while `currentSrc` still points at
+        // the previous file until the new one loads. Reading currentSrc replays the
+        // last sound and drops the next one onto the following card.
+        var src = this.src || this.currentSrc || '';
         if (src.indexOf(SCHEME) !== 0) { return nativePlay.apply(this, arguments); }
         var token = ++seq;
         pending[token] = this;

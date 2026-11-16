@@ -87,6 +87,34 @@ window.__amgiNativeAudioFallback(token3);
 check('fallback plays in the page', nativePlayCalls === before + 1, `nativePlayCalls=${nativePlayCalls}`);
 check('fallback is single-use', (() => { const n = nativePlayCalls; window.__amgiNativeAudioFallback(token3); return nativePlayCalls === n; })(), `nativePlayCalls=${nativePlayCalls}`);
 
+// 6. the card's replay queue: one reused element whose `src` is reassigned per
+//    item while `currentSrc` still points at the previous file — the shape of
+//    replaySequential() in CardWebViewBridge.js. Word then sentence, in order.
+const queuePlayer = new HTMLMediaElement('amgi-asset://media/word.m4a');
+queuePlayer.currentSrc = 'amgi-asset://media/word.m4a'; // stays stale on purpose
+const queue = ['amgi-asset://media/word.m4a', 'amgi-asset://media/sentence.m4a'];
+const played = [];
+let queueIndex = 0;
+
+function playNextQueuedItem() {
+  if (queueIndex >= queue.length) return;
+  const src = queue[queueIndex++];
+  const before = posted.length;
+  queuePlayer.src = src;            // currentSrc deliberately not updated
+  queuePlayer.play();
+  played.push(posted[before][1].src);
+}
+
+queuePlayer.addEventListener('ended', playNextQueuedItem); // advances the queue
+playNextQueuedItem();
+const wordToken = posted[posted.length - 1][1].token;
+window.__amgiNativeAudioEnded(wordToken);                  // native finished the word
+
+check('queue plays word then sentence, in order',
+  JSON.stringify(played) === JSON.stringify(queue), JSON.stringify(played));
+check('queue never replays the previous item',
+  played[0] !== played[1], JSON.stringify(played));
+
 let failed = 0;
 for (const r of results) {
   console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name}${r.ok ? '' : '  -> ' + r.detail}`);

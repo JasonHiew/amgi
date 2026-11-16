@@ -210,13 +210,27 @@ final class CardWebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMess
 
         let token = (body["token"] as? NSNumber)?.intValue ?? 0
         onAudioStateChange?(true)
-        audioBridge.play(url: fileURL, token: token) { [weak self] finishedToken in
-            guard let self else { return }
-            self.onAudioStateChange?(false)
-            self.currentWebView?.evaluateJavaScript(
-                "window.__amgiNativeAudioEnded && window.__amgiNativeAudioEnded(\(finishedToken));"
-            )
-        }
+        audioBridge.play(
+            url: fileURL,
+            token: token,
+            onEnd: { [weak self] finishedToken in
+                guard let self else { return }
+                self.onAudioStateChange?(false)
+                self.currentWebView?.evaluateJavaScript(
+                    "window.__amgiNativeAudioEnded && window.__amgiNativeAudioEnded(\(finishedToken));"
+                )
+            },
+            onFailure: { [weak self] failedToken in
+                // The file would not play natively (corrupt, unsupported codec).
+                // Hand it back so the card still makes a sound and the page's
+                // queue keeps advancing.
+                guard let self else { return }
+                self.onAudioStateChange?(false)
+                self.currentWebView?.evaluateJavaScript(
+                    "window.__amgiNativeAudioFallback && window.__amgiNativeAudioFallback(\(failedToken));"
+                )
+            }
+        )
     }
 
     // MARK: - TTS
