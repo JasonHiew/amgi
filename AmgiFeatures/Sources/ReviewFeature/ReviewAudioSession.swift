@@ -35,6 +35,16 @@ enum ReviewAudioSession {
         apply(playInSilent: playInSilent, mode: ReviewAudioPlaybackMode.resolved(modeRaw))
     }
 
+    /// Reads the persisted preferences and applies them. Playback paths that can
+    /// start without the review view re-appearing (card audio routed out of the
+    /// WebView) call this so the category is never left from another screen.
+    static func applyCurrentPreferences(defaults: UserDefaults = .standard) {
+        let playInSilent = defaults.bool(forKey: ReviewPreferences.Keys.playAudioInSilentMode)
+        let raw = defaults.string(forKey: ReviewPreferences.Keys.audioPlaybackMode)
+            ?? ReviewAudioPlaybackMode.mix.rawValue
+        apply(playInSilent: playInSilent, modeRaw: raw)
+    }
+
     static func release() {
         #if canImport(UIKit)
         try? AVAudioSession.sharedInstance().setActive(
