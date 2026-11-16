@@ -248,6 +248,10 @@ private struct SettingsRowLayout<Accessory: View>: View {
             Text(title)
                 .amgiFont(.body)
                 .foregroundStyle(palette.textPrimary)
+                // A long accessory value (a picker's selected title, say) must not
+                // push the row label onto a second line — the row grows and the
+                // label stops aligning with its icon and control.
+                .lineLimit(1)
             Spacer(minLength: AmgiSpacing.sm)
             accessory()
         }
