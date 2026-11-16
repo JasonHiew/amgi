@@ -21,21 +21,27 @@ final class WebCardAudioBridge {
     /// replayed once native playback finishes.
     private var player: AVPlayer?
     private var endObserver: (any NSObjectProtocol)?
+    private var pendingToken: Int = 0
+    private var onEnd: ((Int) -> Void)?
 
     func play(url: URL, token: Int, onEnd: @escaping (Int) -> Void) {
         stop()
         // Re-assert for every item: a lookup popup or a TTS utterance may have
         // changed the category since the review session started.
         ReviewAudioSession.applyCurrentPreferences()
+        pendingToken = token
+        self.onEnd = onEnd
         let item = AVPlayerItem(url: url)
         let player = AVPlayer(playerItem: item)
         self.player = player
+        // Only `self` crosses domains here; the page callback is invoked on the
+        // main actor in `finish`, so it never has to be Sendable.
         endObserver = NotificationCenter.default.addObserver(
             forName: AVPlayerItem.didPlayToEndTimeNotification,
             object: item,
             queue: .main
-        ) { _ in
-            Task { @MainActor in onEnd(token) }
+        ) { [weak self] _ in
+            Task { @MainActor in self?.finish() }
         }
         player.play()
     }
@@ -47,6 +53,20 @@ final class WebCardAudioBridge {
             NotificationCenter.default.removeObserver(endObserver)
             self.endObserver = nil
         }
+        onEnd = nil
+    }
+
+    private func finish() {
+        let token = pendingToken
+        let handler = onEnd
+        player?.pause()
+        player = nil
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+            self.endObserver = nil
+        }
+        onEnd = nil
+        handler?(token)
     }
 }
 
