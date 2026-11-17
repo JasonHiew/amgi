@@ -71,6 +71,26 @@ package struct AudioProbeResult: Identifiable, Sendable {
 /// `isOtherAudioPlaying == false` even while another app is audibly playing, and
 /// delivers no interruption notifications. On device the same numbers are real.
 package enum ReviewAudioProbe {
+    /// Snapshot of the session as the app finds it, before the probe touches it.
+    /// Shows whether something already changed the category at launch.
+    package static func preflight() -> String {
+        let session = AVAudioSession.sharedInstance()
+        return "start: category=\(session.category.rawValue) options=\(session.categoryOptions.rawValue) otherAudio=\(session.isOtherAudioPlaying)"
+    }
+
+    /// Waits for another app's audio to be audible. Without this the whole run is
+    /// vacuous: `otherAudio=no` before the first mode means there was nothing to
+    /// duck or interrupt, so every "background stopped" line is a false negative.
+    package static func waitForOtherAudio(seconds: Double = 25) async -> Bool {
+        let session = AVAudioSession.sharedInstance()
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if session.isOtherAudioPlaying { return true }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        return false
+    }
+
     /// Runs every mode in order and returns what each observed.
     package static func runAll() async -> [AudioProbeResult] {
         var results: [AudioProbeResult] = []
@@ -179,8 +199,9 @@ package enum ReviewAudioProbe {
 /// Plain-text report: keeps the type out of the module boundary, so the caller can
 /// render it with whatever UI it already has. DEBUG only.
 package extension ReviewAudioProbe {
-    static func report(_ results: [AudioProbeResult]) -> String {
+    static func report(_ results: [AudioProbeResult], preflight: String? = nil) -> String {
         var lines = ["AUDIO DIAGNOSTICS"]
+        if let preflight { lines.append(preflight) }
         for result in results {
             lines.append("")
             lines.append("\(result.mode.uppercased())")

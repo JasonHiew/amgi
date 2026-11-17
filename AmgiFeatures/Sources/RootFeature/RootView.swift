@@ -42,11 +42,54 @@ public struct RootView: View {
     private let wordSpotlight = WordSpotlightController.shared
     @State private var lastLoad = Date()
     #if DEBUG
-    @State private var audioProbeResults: [AudioProbeResult] = []
+    @State private var audioProbeStatus = "start your music, then tap Run"
+    @State private var audioProbeReport = ""
     #endif
 
     @Shared(.appStorage(ReaderPreferences.Keys.showTab))
     private var showReaderTab: Bool = true
+
+    #if DEBUG
+    /// Manual trigger with a visible status line, so a run with no background audio
+    /// can never be mistaken for a measurement.
+    @ViewBuilder
+    private var audioProbePanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("AUDIO DIAGNOSTICS").font(.caption.bold())
+            Text(audioProbeStatus).font(.caption2)
+            Button("Run") { runAudioProbe() }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            if !audioProbeReport.isEmpty {
+                ScrollView {
+                    Text(audioProbeReport)
+                        .font(.caption2.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 260)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .padding()
+    }
+
+    private func runAudioProbe() {
+        Task {
+            audioProbeStatus = "waiting for background audio…"
+            guard await ReviewAudioProbe.waitForOtherAudio() else {
+                audioProbeStatus = "no background audio detected — start your music and tap Run again"
+                return
+            }
+            audioProbeStatus = "music detected, measuring…"
+            let preflight = ReviewAudioProbe.preflight()
+            let results = await ReviewAudioProbe.runAll()
+            audioProbeReport = ReviewAudioProbe.report(results, preflight: preflight)
+            audioProbeStatus = "done"
+        }
+    }
+    #endif
 
     public var body: some View {
         routed
@@ -66,30 +109,19 @@ public struct RootView: View {
                 await wordSpotlight.refresh()
             }
             #if DEBUG
-            // Audio diagnostics. In the simulator a launch argument selects one mode;
-            // on device the whole set runs at launch so a single install produces a
-            // report card — the simulator cannot model cross-app audio at all.
+            // Audio diagnostics. The simulator cannot model cross-app audio at all
+            // (its isOtherAudioPlaying is constant false), so on device the run is
+            // manual: start music, tap Run, and the probe first waits until that
+            // music is actually audible before measuring anything.
             .task {
                 #if targetEnvironment(simulator)
                 ReviewAudioProbe.runIfRequested()
-                #else
-                if audioProbeResults.isEmpty {
-                    audioProbeResults = await ReviewAudioProbe.runAll()
-                }
                 #endif
             }
             .overlay(alignment: .top) {
-                if !audioProbeResults.isEmpty {
-                    ScrollView {
-                        Text(ReviewAudioProbe.report(audioProbeResults))
-                            .font(.caption.monospaced())
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
-                    }
-                    .frame(maxHeight: 320)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    .padding()
-                }
+                #if !targetEnvironment(simulator)
+                audioProbePanel
+                #endif
             }
             #endif
             .onChange(of: wordSpotlight.pendingLink, initial: true) { _, link in
