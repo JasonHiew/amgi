@@ -6,6 +6,7 @@
 //
 
 public import SwiftUI
+import AVFoundation
 import AppCore
 import AppShared
 import Theme

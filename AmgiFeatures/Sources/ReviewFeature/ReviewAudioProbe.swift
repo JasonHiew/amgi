@@ -34,6 +34,9 @@ package struct AudioProbeResult: Identifiable, Sendable {
     package let otherAudioBefore: Bool
     package let otherAudioDuring: [Bool]
     package let otherAudioAfter: Bool
+    /// Background audio sampled 0.5s, 1.5s and 3s after we released the session.
+    /// A single sample cannot tell "never came back" from "came back slowly".
+    package let otherAudioAfterSeries: [Bool]
     package let interruptions: [String]
     package let playedSeconds: Double
     /// Output route when measured. Bluetooth means the mic cannot hear the mix, so
@@ -43,6 +46,8 @@ package struct AudioProbeResult: Identifiable, Sendable {
     package let micBeforeDb: Double?
     package let micDuringDb: Double?
     package let micAfterDb: Double?
+    /// Why the levels are absent, when they are. Silence here is not evidence.
+    package let micStatus: String
 
     package var id: String { mode }
 
@@ -138,7 +143,15 @@ package enum ReviewAudioProbe {
         note("applied mode=\(mode.rawValue) options=\(session.categoryOptions.rawValue) otherAudio=\(otherBefore) route=\(route)")
 
         // Music only, before we make a sound.
-        let micBefore = mic ? await recordLevels(seconds: 0.7)?.music : nil
+        var micStatus = mic ? "recording" : "not requested"
+        var micBefore: Double?
+        if mic {
+            if let levels = await recordLevels(seconds: 0.7) {
+                micBefore = levels.music
+            } else {
+                micStatus = "unavailable — permission denied or recorder failed"
+            }
+        }
 
         var during: [Bool] = []
         var played = 0.0
@@ -162,9 +175,16 @@ package enum ReviewAudioProbe {
         }
 
         ReviewAudioSession.restoreIfNeeded(mode: mode)
-        try? await Task.sleep(for: .milliseconds(700))
-        let micAfter = mic ? await recordLevels(seconds: 0.7)?.music : nil
-        let otherAfter = session.isOtherAudioPlaying
+        var afterSeries: [Bool] = []
+        var micAfter: Double?
+        for step in [500, 1000, 1500] {
+            try? await Task.sleep(for: .milliseconds(step))
+            afterSeries.append(session.isOtherAudioPlaying)
+            if mic, step == 1500 {
+                micAfter = await recordLevels(seconds: 0.7)?.music
+            }
+        }
+        let otherAfter = afterSeries.last ?? session.isOtherAudioPlaying
         note("done mode=\(mode.rawValue) during=\(during) after=\(otherAfter) played=\(String(format: "%.2f", played))")
 
         return AudioProbeResult(
@@ -172,12 +192,14 @@ package enum ReviewAudioProbe {
             otherAudioBefore: otherBefore,
             otherAudioDuring: during,
             otherAudioAfter: otherAfter,
+            otherAudioAfterSeries: afterSeries,
             interruptions: log.snapshot(),
             playedSeconds: played,
             route: route,
             micBeforeDb: micBefore,
             micDuringDb: micDuring,
-            micAfterDb: micAfter
+            micAfterDb: micAfter,
+            micStatus: micStatus
         )
     }
 
@@ -296,13 +318,17 @@ package extension ReviewAudioProbe {
             lines.append("\(result.mode.uppercased())")
             lines.append("before  otherAudio=\(result.otherAudioBefore ? "yes" : "no")")
             lines.append("during  \(result.otherAudioDuring.map { $0 ? "playing" : "stopped" }.joined(separator: ", "))")
-            lines.append("after   otherAudio=\(result.otherAudioAfter ? "yes" : "no")")
+            let after = result.otherAudioAfterSeries.map { $0 ? "yes" : "no" }.joined(separator: ",")
+            lines.append("after   otherAudio=\(result.otherAudioAfter ? "yes" : "no")  (0.5s,1.5s,3s: \(after))")
             lines.append("route   \(result.route)")
             lines.append(result.verdict)
             if let before = result.micBeforeDb,
                let during = result.micDuringDb,
                let after = result.micAfterDb {
-                lines.append(String(format: "mic music  before %.1f  during %.1f  after %.1f dB", before, during, after))
+                lines.append(String(format: "mic music  before %.1f  during %.1f  after %.1f dB  (duck %.1f, recovery %+.1f)",
+                                    before, during, after, before - during, after - before))
+            } else {
+                lines.append("mic music  not measured: \(result.micStatus)")
             }
             if !result.interruptions.isEmpty {
                 lines.append("interruptions: \(result.interruptions.joined(separator: "; "))")
