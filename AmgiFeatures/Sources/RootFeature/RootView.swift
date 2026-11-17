@@ -6,7 +6,6 @@
 //
 
 public import SwiftUI
-import AVFoundation
 import AppCore
 import AppShared
 import Theme
@@ -42,62 +41,9 @@ public struct RootView: View {
     @State private var wordSheet: WordSpotlightSheet?
     private let wordSpotlight = WordSpotlightController.shared
     @State private var lastLoad = Date()
-    #if DEBUG
-    @State private var audioProbeStatus = "start your music, then tap Run"
-    @State private var audioProbeReport = ""
-    #endif
 
     @Shared(.appStorage(ReaderPreferences.Keys.showTab))
     private var showReaderTab: Bool = true
-
-    #if DEBUG
-    /// Manual trigger with a visible status line, so a run with no background audio
-    /// can never be mistaken for a measurement.
-    @ViewBuilder
-    private var audioProbePanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("AUDIO DIAGNOSTICS").font(.caption.bold())
-            Text(audioProbeStatus).font(.caption2)
-            HStack {
-                Button("Run") { runAudioProbe(mic: false) }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                // Levels only mean something on the built-in speaker: over Bluetooth
-                // the microphone hears none of the mix.
-                Button("Run + levels") { runAudioProbe(mic: true) }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
-            if !audioProbeReport.isEmpty {
-                ScrollView {
-                    Text(audioProbeReport)
-                        .font(.caption2.monospaced())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 260)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .padding()
-    }
-
-    private func runAudioProbe(mic: Bool) {
-        Task {
-            audioProbeStatus = "waiting for background audio…"
-            guard await ReviewAudioProbe.waitForOtherAudio() else {
-                audioProbeStatus = "no background audio detected — start your music and tap Run again"
-                return
-            }
-            audioProbeStatus = mic ? "measuring with microphone (allow it once)…" : "music detected, measuring…"
-            let preflight = ReviewAudioProbe.preflight()
-            let results = await ReviewAudioProbe.runAll(mic: mic)
-            audioProbeReport = ReviewAudioProbe.report(results, preflight: preflight)
-            audioProbeStatus = "done"
-        }
-    }
-    #endif
 
     public var body: some View {
         routed
@@ -116,22 +62,6 @@ public struct RootView: View {
                 guard AmgiRoot.startupError == nil else { return }
                 await wordSpotlight.refresh()
             }
-            #if DEBUG
-            // Audio diagnostics. The simulator cannot model cross-app audio at all
-            // (its isOtherAudioPlaying is constant false), so on device the run is
-            // manual: start music, tap Run, and the probe first waits until that
-            // music is actually audible before measuring anything.
-            .task {
-                #if targetEnvironment(simulator)
-                ReviewAudioProbe.runIfRequested()
-                #endif
-            }
-            .overlay(alignment: .top) {
-                #if !targetEnvironment(simulator)
-                audioProbePanel
-                #endif
-            }
-            #endif
             .onChange(of: wordSpotlight.pendingLink, initial: true) { _, link in
                 guard let link else { return }
                 wordSheet = .word(link)
