@@ -41,6 +41,9 @@ public struct RootView: View {
     @State private var wordSheet: WordSpotlightSheet?
     private let wordSpotlight = WordSpotlightController.shared
     @State private var lastLoad = Date()
+    #if DEBUG
+    @State private var audioProbeResults: [AudioProbeResult] = []
+    #endif
 
     @Shared(.appStorage(ReaderPreferences.Keys.showTab))
     private var showReaderTab: Bool = true
@@ -62,6 +65,33 @@ public struct RootView: View {
                 guard AmgiRoot.startupError == nil else { return }
                 await wordSpotlight.refresh()
             }
+            #if DEBUG
+            // Audio diagnostics. In the simulator a launch argument selects one mode;
+            // on device the whole set runs at launch so a single install produces a
+            // report card — the simulator cannot model cross-app audio at all.
+            .task {
+                #if targetEnvironment(simulator)
+                ReviewAudioProbe.runIfRequested()
+                #else
+                if audioProbeResults.isEmpty {
+                    audioProbeResults = await ReviewAudioProbe.runAll()
+                }
+                #endif
+            }
+            .overlay(alignment: .top) {
+                if !audioProbeResults.isEmpty {
+                    ScrollView {
+                        Text(ReviewAudioProbe.report(audioProbeResults))
+                            .font(.caption.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                    }
+                    .frame(maxHeight: 320)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .padding()
+                }
+            }
+            #endif
             .onChange(of: wordSpotlight.pendingLink, initial: true) { _, link in
                 guard let link else { return }
                 wordSheet = .word(link)
