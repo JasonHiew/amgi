@@ -36,6 +36,13 @@ package struct AudioProbeResult: Identifiable, Sendable {
     package let otherAudioAfter: Bool
     package let interruptions: [String]
     package let playedSeconds: Double
+    /// Output route when measured. Bluetooth means the mic cannot hear the mix, so
+    /// any level figure from that run is meaningless.
+    package let route: String
+    /// Music level in dB from the device microphone, tone band removed.
+    package let micBeforeDb: Double?
+    package let micDuringDb: Double?
+    package let micAfterDb: Double?
 
     package var id: String { mode }
 
@@ -53,9 +60,10 @@ package struct AudioProbeResult: Identifiable, Sendable {
             // Ducking leaves the other app playing, only quieter. This API cannot
             // see volume, so "kept playing" is the correct expectation here and a
             // stop would mean it interrupted instead.
-            return stillPlaying == samples
-                ? "background kept playing (volume not exposed to this API)"
-                : "background stopped — that is interruption, not ducking"
+            if stillPlaying != samples {
+                return "background stopped — that is interruption, not ducking"
+            }
+            return "background kept playing (volume not exposed to this API)"
         default:
             return stillPlaying == samples
                 ? "mixed — background unaffected"
@@ -92,10 +100,10 @@ package enum ReviewAudioProbe {
     }
 
     /// Runs every mode in order and returns what each observed.
-    package static func runAll() async -> [AudioProbeResult] {
+    package static func runAll(mic: Bool = false) async -> [AudioProbeResult] {
         var results: [AudioProbeResult] = []
         for mode in [ReviewAudioPlaybackMode.mix, .duck, .interrupt] {
-            results.append(await measure(mode: mode))
+            results.append(await measure(mode: mode, mic: mic))
         }
         return results
     }
@@ -105,13 +113,14 @@ package enum ReviewAudioProbe {
         guard let raw = UserDefaults.standard.string(forKey: "AmgiAudioProbe") else { return }
         let mode = ReviewAudioPlaybackMode.resolved(raw)
         Task { @MainActor in
-            _ = await measure(mode: mode)
+            _ = await measure(mode: mode, mic: false)
         }
     }
 
     @MainActor
-    private static func measure(mode: ReviewAudioPlaybackMode) async -> AudioProbeResult {
+    private static func measure(mode: ReviewAudioPlaybackMode, mic: Bool) async -> AudioProbeResult {
         let session = AVAudioSession.sharedInstance()
+        let route = routeDescription()
         let otherBefore = session.isOtherAudioPlaying
         let log = InterruptionLog()
         let observer = NotificationCenter.default.addObserver(
@@ -126,22 +135,35 @@ package enum ReviewAudioProbe {
         defer { NotificationCenter.default.removeObserver(observer) }
 
         ReviewAudioSession.apply(playInSilent: true, mode: mode)
-        note("applied mode=\(mode.rawValue) options=\(session.categoryOptions.rawValue) otherAudio=\(otherBefore)")
+        note("applied mode=\(mode.rawValue) options=\(session.categoryOptions.rawValue) otherAudio=\(otherBefore) route=\(route)")
+
+        // Music only, before we make a sound.
+        let micBefore = mic ? await recordLevels(seconds: 0.7)?.music : nil
 
         var during: [Bool] = []
         var played = 0.0
-        if let url = writeTone(seconds: 1.5), let player = try? AVAudioPlayer(contentsOf: url) {
+        var micDuring: Double?
+        if let url = writeTone(seconds: 1.8), let player = try? AVAudioPlayer(contentsOf: url) {
             player.play()
-            for _ in 0..<6 {
+            if mic {
+                micDuring = await recordLevels(seconds: 1.0)?.music
+            }
+            for _ in 0..<3 {
                 try? await Task.sleep(for: .milliseconds(200))
                 during.append(session.isOtherAudioPlaying)
             }
             played = player.currentTime
             player.stop()
+        } else {
+            for _ in 0..<6 {
+                try? await Task.sleep(for: .milliseconds(200))
+                during.append(session.isOtherAudioPlaying)
+            }
         }
 
         ReviewAudioSession.restoreIfNeeded(mode: mode)
-        try? await Task.sleep(for: .milliseconds(900))
+        try? await Task.sleep(for: .milliseconds(700))
+        let micAfter = mic ? await recordLevels(seconds: 0.7)?.music : nil
         let otherAfter = session.isOtherAudioPlaying
         note("done mode=\(mode.rawValue) during=\(during) after=\(otherAfter) played=\(String(format: "%.2f", played))")
 
@@ -151,8 +173,75 @@ package enum ReviewAudioProbe {
             otherAudioDuring: during,
             otherAudioAfter: otherAfter,
             interruptions: log.snapshot(),
-            playedSeconds: played
+            playedSeconds: played,
+            route: route,
+            micBeforeDb: micBefore,
+            micDuringDb: micDuring,
+            micAfterDb: micAfter
         )
+    }
+
+    /// Where the audio is actually going. Levels from the microphone only mean
+    /// something on the built-in speaker.
+    package static func routeDescription() -> String {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        return outputs.map { "\($0.portType.rawValue)" }.joined(separator: ",")
+    }
+
+    /// Records `seconds` from the microphone and returns (musicLevel, toneLevel) in dB.
+    /// The 1 kHz tone is measured with a Goertzel filter and subtracted in power, so
+    /// the music figure stands on its own even while the tone plays.
+    private static func recordLevels(seconds: Double, toneHz: Double = 1_000.0) async -> (music: Double, tone: Double)? {
+        guard await AVAudioApplication.requestRecordPermission() else { return nil }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("amgi-probe-mic.wav")
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVSampleRateKey: 44_100.0,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ]
+        guard let recorder = try? AVAudioRecorder(url: url, settings: settings), recorder.record() else {
+            return nil
+        }
+        try? await Task.sleep(for: .milliseconds(Int(seconds * 1000)))
+        recorder.stop()
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        let frames = AVAudioFrameCount(file.length)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frames) else {
+            return nil
+        }
+        guard (try? file.read(into: buffer)) != nil, let channel = buffer.floatChannelData?[0] else {
+            return nil
+        }
+        let count = Int(buffer.frameLength)
+        guard count > 0 else { return nil }
+
+        var totalPower = 0.0
+        for index in 0..<count {
+            let value = Double(channel[index])
+            totalPower += value * value
+        }
+        totalPower /= Double(count)
+
+        let rate = file.processingFormat.sampleRate
+        var real = 0.0
+        var imaginary = 0.0
+        for index in 0..<count {
+            let angle = 2.0 * Double.pi * toneHz * Double(index) / rate
+            let value = Double(channel[index])
+            real += value * cos(angle)
+            imaginary += value * sin(angle)
+        }
+        let toneAmplitude = 2.0 * sqrt(real * real + imaginary * imaginary) / Double(count)
+        let tonePower = (toneAmplitude * toneAmplitude) / 2.0
+        let musicPower = max(totalPower - tonePower, 0.0)
+
+        func db(_ power: Double) -> Double {
+            power <= 0 ? -80.0 : max(-80.0, 10.0 * log10(power))
+        }
+        return (db(musicPower), db(tonePower))
     }
 
     private static func writeTone(seconds: Double) -> URL? {
@@ -208,7 +297,13 @@ package extension ReviewAudioProbe {
             lines.append("before  otherAudio=\(result.otherAudioBefore ? "yes" : "no")")
             lines.append("during  \(result.otherAudioDuring.map { $0 ? "playing" : "stopped" }.joined(separator: ", "))")
             lines.append("after   otherAudio=\(result.otherAudioAfter ? "yes" : "no")")
+            lines.append("route   \(result.route)")
             lines.append(result.verdict)
+            if let before = result.micBeforeDb,
+               let during = result.micDuringDb,
+               let after = result.micAfterDb {
+                lines.append(String(format: "mic music  before %.1f  during %.1f  after %.1f dB", before, during, after))
+            }
             if !result.interruptions.isEmpty {
                 lines.append("interruptions: \(result.interruptions.joined(separator: "; "))")
             }

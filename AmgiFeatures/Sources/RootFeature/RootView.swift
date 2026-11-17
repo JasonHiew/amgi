@@ -57,9 +57,16 @@ public struct RootView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("AUDIO DIAGNOSTICS").font(.caption.bold())
             Text(audioProbeStatus).font(.caption2)
-            Button("Run") { runAudioProbe() }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+            HStack {
+                Button("Run") { runAudioProbe(mic: false) }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                // Levels only mean something on the built-in speaker: over Bluetooth
+                // the microphone hears none of the mix.
+                Button("Run + levels") { runAudioProbe(mic: true) }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
             if !audioProbeReport.isEmpty {
                 ScrollView {
                     Text(audioProbeReport)
@@ -75,16 +82,16 @@ public struct RootView: View {
         .padding()
     }
 
-    private func runAudioProbe() {
+    private func runAudioProbe(mic: Bool) {
         Task {
             audioProbeStatus = "waiting for background audio…"
             guard await ReviewAudioProbe.waitForOtherAudio() else {
                 audioProbeStatus = "no background audio detected — start your music and tap Run again"
                 return
             }
-            audioProbeStatus = "music detected, measuring…"
+            audioProbeStatus = mic ? "measuring with microphone (allow it once)…" : "music detected, measuring…"
             let preflight = ReviewAudioProbe.preflight()
-            let results = await ReviewAudioProbe.runAll()
+            let results = await ReviewAudioProbe.runAll(mic: mic)
             audioProbeReport = ReviewAudioProbe.report(results, preflight: preflight)
             audioProbeStatus = "done"
         }
